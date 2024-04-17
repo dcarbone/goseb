@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"regexp"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -245,6 +246,25 @@ func (r *recipient) push(ev Event) error {
 	}
 }
 
+type ControlledTopicRule func(ev Event) error
+
+func RuleDataMustBeInt(ev Event) error {
+	if ev.Data == nil {
+		return errors.New("data is empty")
+	}
+	if _, ok := ev.Data.(int); ok {
+		return nil
+	} else {
+		return fmt.Errorf("data must be int, saw %T", ev.Data)
+	}
+}
+
+type ControlledTopic struct {
+	Topic string
+
+	Rule ControlledTopicRule
+}
+
 type BusConfig struct {
 	// BlockedEventTTL denotes the maximum amount of time a given recipient will be allowed to block before
 	// an event before the event is dropped for that recipient.  This only impacts the event for the blocking recipient
@@ -252,6 +272,8 @@ type BusConfig struct {
 
 	// RecipientBufferSize will be the size of the input buffer created for your recipient.
 	RecipientBufferSize int
+
+	ControlledTopics []ControlledTopic
 }
 
 type BusOpt func(*BusConfig)
@@ -268,6 +290,12 @@ func WithRecipientBufferSize(n int) BusOpt {
 	}
 }
 
+func WithControlledTopic(topic string, rule ControlledTopicRule) BusOpt {
+	return func(cfg *BusConfig) {
+		cfg.ControlledTopics = append(cfg.ControlledTopics, ControlledTopic{Topic: topic, Rule: rule})
+	}
+}
+
 type Bus struct {
 	mu sync.Mutex
 
@@ -277,6 +305,8 @@ type Bus struct {
 
 	// recipients is a map of recipient_id => recipient
 	recipients map[string]*recipient
+
+	ctr []ControlledTopic
 }
 
 // New creates a new Bus for immediate use
@@ -297,6 +327,8 @@ func New(opts ...BusOpt) *Bus {
 			buffSize: cfg.RecipientBufferSize,
 		},
 		recipients: make(map[string]*recipient),
+
+		ctr: slices.Clone(cfg.ControlledTopics),
 	}
 
 	return &b
@@ -457,6 +489,14 @@ func (b *Bus) sendEvent(ev Event) error {
 	)
 
 	b.mu.Lock()
+
+	for _, ctr := range b.ctr {
+		if ctr.Topic == ev.Topic {
+			if err := ctr.Rule(ev); err != nil {
+				return err
+			}
+		}
+	}
 
 	errCh = make(chan error, len(b.recipients)+1)
 
