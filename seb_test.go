@@ -11,21 +11,36 @@ import (
 func TestBus(t *testing.T) {
 	var (
 		receivedEvent seb.Event
+
+		done = make(chan struct{})
 	)
 
 	bus := seb.New()
-	bus.AttachFunc("", func(ev seb.Event) {
+	_, err := bus.AttachFunc(func(ev seb.Event) {
 		receivedEvent = ev
+		close(done)
 	})
+	if err != nil {
 
-	err := bus.Push(context.Background(), "test-topic", true)
+	}
+
+	err = bus.Push(context.Background(), "test-topic", true)
 	if err != nil {
 		t.Logf("Error while pushing event: %v", err)
 		t.Fail()
 		return
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Log("No event received, assume stuck")
+		t.Fail()
+	}
+
+	if t.Failed() {
+		return
+	}
 
 	if receivedEvent.Topic != "test-topic" {
 		t.Logf("Expected received event to have topic \"test-topic\", saw %q", receivedEvent.Topic)

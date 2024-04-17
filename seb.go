@@ -33,13 +33,13 @@ func GlobalBus() *Bus {
 }
 
 // AttachFunc attaches an event recipient func to the global bus
-func AttachFunc(id string, fn EventFunc, topicFilters ...any) (string, bool) {
-	return GlobalBus().AttachFunc(id, fn, topicFilters...)
+func AttachFunc(fn EventFunc, topicFilters ...any) (string, error) {
+	return GlobalBus().AttachFunc(fn, topicFilters...)
 }
 
 // AttachChannel attaches an event recipient channel to the global bus
-func AttachChannel(id string, ch EventChannel, topicFilters ...any) (string, bool) {
-	return GlobalBus().AttachChannel(id, ch, topicFilters...)
+func AttachChannel(ch EventChannel, topicFilters ...any) (string, error) {
+	return GlobalBus().AttachChannel(ch, topicFilters...)
 }
 
 // Push pushes an event onto the global bus
@@ -349,58 +349,54 @@ func (b *Bus) RequestFrom(ctx context.Context, to, topic string, data any) (Repl
 // You may optionally provide a list of filters to only allow specific messages to be received by this func.  A filter
 // may be a string of the exact topic you wish to receive events from, or a *regexp.Regexp instance to use when
 // matching.
-//
-// It will:
-// - panic if fn is nil
-// - generate random ID if provided ID is empty
-// - return "true" if there was an existing recipient with the same identifier
-func (b *Bus) AttachFunc(id string, fn EventFunc, topicFilters ...any) (string, bool) {
+func (b *Bus) AttachFunc(fn EventFunc, topicFilters ...any) (string, error) {
 	if fn == nil {
-		panic(fmt.Sprintf("AttachFunc called with id %q and nil handler", id))
+		return "", errors.New("func cannot be nil")
 	}
 	var (
-		w        *recipient
-		replaced bool
+		err error
+
+		id = strconv.FormatInt(b.rand.Int63(), 10)
 	)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if id == "" {
-		id = strconv.FormatInt(b.rand.Int63(), 10)
-	}
-
-	if w, replaced = b.recipients[id]; replaced {
+	if w, ok := b.recipients[id]; ok {
 		w.close()
 	}
 
 	if len(topicFilters) > 0 {
-		fn = eventFilterFunc(topicFilters, fn)
+		fn, err = eventFilterFunc(topicFilters, fn)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	b.recipients[id] = newRecipient(id, fn, b.rcfg)
 
-	return id, replaced
+	return id, nil
 }
 
 // AttachChannel immediately adds the provided channel to the list of recipients for new
 // events.
-//
-// It will:
-// - panic if ch is nil
-// - generate random ID if provided ID is empty
-// - return "true" if there was an existing recipient with the same identifier
-func (b *Bus) AttachChannel(id string, ch EventChannel, topicFilters ...any) (string, bool) {
+func (b *Bus) AttachChannel(ch EventChannel, topicFilters ...any) (string, error) {
 	if ch == nil {
-		panic(fmt.Sprintf("AttachChannel called with id %q and nil channel", id))
+		return "", errors.New("chan must not be empty")
 	}
-	var fn EventFunc
+	var (
+		fn  EventFunc
+		err error
+	)
 	if len(topicFilters) > 0 {
-		fn = eventChanFilterFunc(topicFilters, ch)
+		fn, err = eventChanFilterFunc(topicFilters, ch)
 	} else {
 		fn = func(event Event) { ch <- event }
 	}
-	return b.AttachFunc(id, fn)
+	if err != nil {
+		return "", err
+	}
+	return b.AttachFunc(fn)
 }
 
 // Detach immediately removes the provided recipient from receiving any new events, returning true if a
@@ -526,7 +522,7 @@ func (b *Bus) doRequest(ctx context.Context, to, topic string, data any) (Reply,
 	}
 }
 
-func eventFilterFunc(topics []any, fn EventFunc) EventFunc {
+func eventFilterFunc(topics []any, fn EventFunc) (EventFunc, error) {
 	var (
 		st []string
 		rt []*regexp.Regexp
@@ -537,7 +533,7 @@ func eventFilterFunc(topics []any, fn EventFunc) EventFunc {
 		} else if r, ok := topics[i].(*regexp.Regexp); ok {
 			rt = append(rt, r)
 		} else {
-			panic(fmt.Sprintf("cannot handle filter of type %T, expected %T or %T", topics[i], "", (*regexp.Regexp)(nil)))
+			return nil, fmt.Errorf("cannot handle filter of type %T, expected %T or %T", topics[i], "", (*regexp.Regexp)(nil))
 		}
 	}
 
@@ -554,10 +550,10 @@ func eventFilterFunc(topics []any, fn EventFunc) EventFunc {
 				return
 			}
 		}
-	}
+	}, nil
 }
 
-func eventChanFilterFunc(topicFilters []any, ch EventChannel) EventFunc {
+func eventChanFilterFunc(topicFilters []any, ch EventChannel) (EventFunc, error) {
 	var (
 		st []string
 		rt []*regexp.Regexp
@@ -568,7 +564,7 @@ func eventChanFilterFunc(topicFilters []any, ch EventChannel) EventFunc {
 		} else if r, ok := topicFilters[i].(*regexp.Regexp); ok {
 			rt = append(rt, r)
 		} else {
-			panic(fmt.Sprintf("cannot handle filter of type %T, expected %T or %T", topicFilters[i], "", (*regexp.Regexp)(nil)))
+			return nil, fmt.Errorf("cannot handle filter of type %T, expected %T or %T", topicFilters[i], "", (*regexp.Regexp)(nil))
 		}
 	}
 
@@ -585,5 +581,5 @@ func eventChanFilterFunc(topicFilters []any, ch EventChannel) EventFunc {
 				return
 			}
 		}
-	}
+	}, nil
 }
