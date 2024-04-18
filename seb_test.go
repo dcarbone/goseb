@@ -16,7 +16,7 @@ func TestBus(t *testing.T) {
 	)
 
 	bus := seb.New()
-	_, err := bus.AttachFunc(func(ev seb.Event) {
+	_, _, err := bus.AttachFunc("", func(ev seb.Event) {
 		receivedEvent = ev
 		close(done)
 	})
