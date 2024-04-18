@@ -4,7 +4,7 @@ Simple event bus written in go
 # Installation
 
 ```shell
-go get -u github.com/dcarbone/seb/v3
+go get -u github.com/dcarbone/seb/v4
 ```
 
 # Global Bus Usage
@@ -16,7 +16,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dcarbone/seb/v3"
+	"github.com/dcarbone/seb/v4"
 )
 
 func eventHandler(ev seb.Event) {
@@ -24,9 +24,14 @@ func eventHandler(ev seb.Event) {
 }
 
 func main() {
-	seb.AttachFunc("", eventHandler)
+	id, err := seb.AttachFunc(eventHandler)
+	if err != nil {
+		panic(err.Error())
+	}
+	
+	fmt.Println("My handler registration ID is:", id)
 
-	err := seb.Push(context.Background(), "topic-1", map[string]string{"hello": "dave"})
+	err = seb.Push(context.Background(), "topic-1", map[string]string{"hello": "dave"})
 	if err != nil {
 		panic(err.Error())
     }
@@ -45,7 +50,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dcarbone/seb/v3"
+	"github.com/dcarbone/seb/v4"
 )
 
 func eventHandler(ev seb.Event) {
@@ -57,9 +62,14 @@ func main() {
 		// apply bus options here...
 	)
 	
-	bus.AttachFunc("", eventHandler)
-
-	err := bus.Push(context.Background(), "topic-1", map[string]string{"hello": "dave"})
+	id, err := bus.AttachFunc(eventHandler)
+	if err != nil {
+		panic(err.Error())
+    }
+	
+	fmt.Println("My handler registration ID is:", id)
+	
+	err = bus.Push(context.Background(), "topic-1", map[string]string{"hello": "dave"})
 	if err != nil {
 		panic(err.Error())
     }

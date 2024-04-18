@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dcarbone/seb/v3"
+	"github.com/dcarbone/seb/v4"
 )
 
 func TestBus(t *testing.T) {
