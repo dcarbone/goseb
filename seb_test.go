@@ -54,22 +54,22 @@ func BenchmarkBus_Blocking(b *testing.B) {
 	)
 
 	for i := 10; i <= 10000; i = i * 10 {
-		bus := seb.New()
-
-		for n := 0; n < i; n++ {
-			_, _, err := bus.AttachFunc("", func(ev *seb.Event) {})
-			if err != nil {
-				b.Errorf("Error adding recipient %d: %v", n, err)
-				return
-			}
-		}
-
 		b.Run(fmt.Sprintf("%d-recipients", i), func(b *testing.B) {
+			bus := seb.New()
+			b.Cleanup(func() { bus.DetachAll() })
+
+			for n := 0; n < i; n++ {
+				_, _, err := bus.AttachFunc("", func(ev *seb.Event) {})
+				if err != nil {
+					b.Errorf("Error adding recipient %d: %v", n, err)
+					return
+				}
+			}
+
+			b.ResetTimer()
 			for m := 0; m < b.N; m++ {
 				bus.Push(context.Background(), testTopic, data)
 			}
 		})
-
-		bus.DetachAll()
 	}
 }
