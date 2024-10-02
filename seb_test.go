@@ -14,13 +14,13 @@ func TestBus(t *testing.T) {
 		testTopic = "test-topic"
 	)
 	var (
-		receivedEvent *seb.Event
+		receivedEvent *seb.Event[bool]
 
 		done = make(chan struct{})
 	)
 
-	bus := seb.New()
-	_, _, err := bus.AttachFunc("", func(ev *seb.Event) {
+	bus := seb.New[bool]()
+	_, _, err := bus.AttachFunc("", func(ev *seb.Event[bool]) {
 		receivedEvent = ev
 		close(done)
 	})
@@ -38,28 +38,25 @@ func TestBus(t *testing.T) {
 		return
 	}
 
-	if receivedEvent.Topic != "test-topic" {
+	if receivedEvent.Topic != testTopic {
 		t.Errorf("Expected received event to have topic %q, saw %q", testTopic, receivedEvent.Topic)
-	}
-	if b, _ := receivedEvent.Data.(bool); b != true {
-		t.Errorf("Expected received event to have data=%[1]T(%[1]v), saw %[2]v(%[2]T)", true, receivedEvent.Data)
 	}
 }
 
-func BenchmarkBus_Blocking(b *testing.B) {
+func BenchmarkBus_Push_Unfiltered(b *testing.B) {
 	const testTopic = "test-topic"
 
 	var (
-		data = struct{}{}
+		data = true
 	)
 
 	for i := 10; i <= 10000; i = i * 10 {
 		b.Run(fmt.Sprintf("%d-recipients", i), func(b *testing.B) {
-			bus := seb.New()
+			bus := seb.New[bool]()
 			b.Cleanup(func() { bus.DetachAll() })
 
 			for n := 0; n < i; n++ {
-				_, _, err := bus.AttachFunc("", func(ev *seb.Event) {})
+				_, _, err := bus.AttachFunc("", func(_ *seb.Event[bool]) {})
 				if err != nil {
 					b.Errorf("Error adding recipient %d: %v", n, err)
 					return
