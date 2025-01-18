@@ -2,37 +2,70 @@ package seb_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/dcarbone/seb/v3"
+	"github.com/dcarbone/seb/v4"
 )
 
 func TestBus(t *testing.T) {
+	const (
+		testTopic = "test-topic"
+	)
 	var (
-		receivedEvent seb.Event
+		receivedEvent *seb.Event[bool]
+
+		done = make(chan struct{})
 	)
 
-	bus := seb.New()
-	bus.AttachFunc("", func(ev seb.Event) {
+	bus := seb.New[bool]()
+	_, _, err := bus.AttachFunc("", func(ev *seb.Event[bool]) {
 		receivedEvent = ev
+		close(done)
 	})
-
-	err := bus.Push(context.Background(), "test-topic", true)
 	if err != nil {
-		t.Logf("Error while pushing event: %v", err)
-		t.Fail()
+		t.Errorf("Error pushing message: %v", err)
 		return
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	bus.Push(context.Background(), testTopic, true)
 
-	if receivedEvent.Topic != "test-topic" {
-		t.Logf("Expected received event to have topic \"test-topic\", saw %q", receivedEvent.Topic)
-		t.Fail()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Error("No event received, assume stuck")
+		return
 	}
-	if b, _ := receivedEvent.Data.(bool); b != true {
-		t.Logf("Expected received event to have data=%[1]T(%[1]v), saw %[2]v(%[2]T)", true, receivedEvent.Data)
-		t.Fail()
+
+	if receivedEvent.Topic != testTopic {
+		t.Errorf("Expected received event to have topic %q, saw %q", testTopic, receivedEvent.Topic)
+	}
+}
+
+func BenchmarkBus_Push_Unfiltered(b *testing.B) {
+	const (
+		testTopic = "test-topic"
+		testData  = true
+	)
+
+	for i := 10; i <= 10000; i = i * 10 {
+		b.Run(fmt.Sprintf("%d-recipients", i), func(b *testing.B) {
+			bus := seb.New[bool]()
+			b.Cleanup(func() { bus.DetachAll() })
+
+			for n := 0; n < i; n++ {
+				_, _, err := bus.AttachFunc("", func(_ *seb.Event[bool]) {})
+				if err != nil {
+					b.Errorf("Error adding recipient %d: %v", n, err)
+					return
+				}
+			}
+
+			b.ResetTimer()
+			for m := 0; m < b.N; m++ {
+				bus.Push(context.Background(), testTopic, testData)
+			}
+		})
 	}
 }

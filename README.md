@@ -4,7 +4,7 @@ Simple event bus written in go
 # Installation
 
 ```shell
-go get -u github.com/dcarbone/seb/v3
+go get -u github.com/dcarbone/seb/v4
 ```
 
 # Global Bus Usage
@@ -16,21 +16,25 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dcarbone/seb/v3"
+	"github.com/dcarbone/seb/v4"
 )
 
-func eventHandler(ev seb.Event) {
+func eventHandler(ev *seb.Event[any]) {
 	fmt.Println("Event received:", ev)
 }
 
 func main() {
-	seb.AttachFunc("", eventHandler)
-
-	err := seb.Push(context.Background(), "topic-1", map[string]string{"hello": "dave"})
+	id, replaced, err := seb.AttachFunc("", eventHandler)
 	if err != nil {
 		panic(err.Error())
+	}
+	if replaced {
+		fmt.Printf("overwrote existing handler for %q\n", id)
     }
 	
+	fmt.Println("My handler registration ID is:", id)
+
+	seb.Push(context.Background(), "topic-1", map[string]string{"hello": "dave"})
 	// and so on.
 }
 
@@ -45,25 +49,30 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dcarbone/seb/v3"
+	"github.com/dcarbone/seb/v4"
 )
 
-func eventHandler(ev seb.Event) {
+func eventHandler(ev *seb.Event[map[string]string]) {
 	fmt.Println("Event received:", ev)
 }
 
 func main() {
-	bus := seb.New(
+	bus := seb.New[map[string]string](
 		// apply bus options here...
 	)
-	
-	bus.AttachFunc("", eventHandler)
 
-	err := bus.Push(context.Background(), "topic-1", map[string]string{"hello": "dave"})
+	id, replaced, err := bus.AttachFunc("", eventHandler)
 	if err != nil {
 		panic(err.Error())
     }
-	
+	if replaced {
+		fmt.Printf("overwrote existing handler for %q\n", id)
+    }
+
+	fmt.Println("My handler registration ID is:", id)
+
+	bus.Push(context.Background(), "topic-1", map[string]string{"hello": "dave"})
+
 	// and so on.
 }
 ```
