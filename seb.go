@@ -13,7 +13,6 @@ import (
 
 const (
 	DefaultRecipientBufferSize = 100
-	DefaultBlockedEventTTL     = 5 * time.Second
 )
 
 var recipientIDSource atomic.Uint64
@@ -56,91 +55,19 @@ func newEvent[T any](ctx context.Context, topic string, data T) *Event[T] {
 type EventFunc[T any] func(*Event[T])
 
 // EventChannel can be provided to a Bus to have new Events pushed to it
-type EventChannel[T any] chan *Event[T]
-
-type recipientConfig struct {
-	buffSize int
-}
-
-type recipient[T any] struct {
-	id string
-	fn EventFunc[T]
-	wg sync.WaitGroup
-	in chan *Event[T]
-}
-
-func newRecipient[T any](id string, fn EventFunc[T], cfg recipientConfig) *recipient[T] {
-	w := &recipient[T]{
-		id: id,
-		fn: fn,
-		in: make(chan *Event[T], cfg.buffSize),
-	}
-	go w.process()
-	return w
-}
-
-func (r *recipient[T]) process() {
-	for ev := range r.in {
-		r.fn(ev)
-	}
-}
-
-func (r *recipient[T]) push(ev *Event[T]) {
-	defer r.wg.Done()
-	select {
-	case r.in <- ev:
-	default:
-	}
-}
-
-type BusConfig struct {
-	// BlockedEventTTL denotes the maximum amount of time a given recipient will be allowed to block before
-	// an event before the event is dropped for that recipient.  This only impacts the event for the blocking recipient
-	BlockedEventTTL time.Duration
-
-	// RecipientBufferSize will be the size of the input buffer created for your recipient.
-	RecipientBufferSize int
-}
-
-type BusOpt func(*BusConfig)
-
-func WithBlockedEventTTL(d time.Duration) BusOpt {
-	return func(cfg *BusConfig) {
-		cfg.BlockedEventTTL = d
-	}
-}
-
-func WithRecipientBufferSize(n int) BusOpt {
-	return func(cfg *BusConfig) {
-		cfg.RecipientBufferSize = n
-	}
-}
+type EventChannel[T any] chan<- *Event[T]
 
 type Bus[T any] struct {
 	mu sync.RWMutex
 
-	rcfg recipientConfig
-
 	// recipients is a map of recipient_id => recipient
-	recipients map[string]*recipient[T]
+	recipients map[string]EventFunc[T]
 }
 
 // New creates a new Bus for immediate use
-func New[T any](opts ...BusOpt) *Bus[T] {
-	cfg := BusConfig{
-		BlockedEventTTL:     DefaultBlockedEventTTL,
-		RecipientBufferSize: DefaultRecipientBufferSize,
-	}
-
-	for _, fn := range opts {
-		fn(&cfg)
-	}
-
+func New[T any]() *Bus[T] {
 	b := Bus[T]{
-		rcfg: recipientConfig{
-			buffSize: cfg.RecipientBufferSize,
-		},
-		recipients: make(map[string]*recipient[T]),
+		recipients: make(map[string]EventFunc[T]),
 	}
 
 	return &b
@@ -155,8 +82,7 @@ func (b *Bus[T]) Push(ctx context.Context, topic string, data T) {
 
 	// fire push event to each recipient in a separate routine.
 	for id := range b.recipients {
-		b.recipients[id].wg.Add(1)
-		b.recipients[id].push(ev)
+		b.recipients[id](ev)
 	}
 }
 
@@ -172,8 +98,7 @@ func (b *Bus[T]) PushTo(ctx context.Context, to, topic string, data T) error {
 		return fmt.Errorf(errf, ErrRecipientNotFound, to)
 	}
 
-	r.wg.Add(1)
-	go r.push(newEvent(ctx, topic, data))
+	r(newEvent(ctx, topic, data))
 
 	return nil
 }
@@ -194,6 +119,11 @@ func (b *Bus[T]) AttachFunc(id string, fn EventFunc[T], topicFilters ...any) (st
 		return "", false, ErrEventFuncNil
 	}
 
+	// if no specific id is provided, create one
+	if id == "" {
+		id = strconv.FormatUint(recipientIDSource.Add(1), 10)
+	}
+
 	// if filters are provided, handle before acquiring lock
 	if len(topicFilters) > 0 {
 		fn, err = buildFilteredFunc(topicFilters, fn)
@@ -202,21 +132,16 @@ func (b *Bus[T]) AttachFunc(id string, fn EventFunc[T], topicFilters ...any) (st
 		}
 	}
 
-	// if no specific id is provided, create one
-	if id == "" {
-		id = strconv.FormatUint(recipientIDSource.Add(1), 10)
-	}
-
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	// if handler with ID is already registered, close it and make note
 	if _, replaced = b.recipients[id]; replaced {
-		b.closeRecipient(id)
+		delete(b.recipients, id)
 	}
 
 	// create new recipient
-	b.recipients[id] = newRecipient(id, fn, b.rcfg)
+	b.recipients[id] = fn
 
 	return id, replaced, nil
 }
@@ -237,7 +162,7 @@ func (b *Bus[T]) Detach(id string) bool {
 	defer b.mu.Unlock()
 
 	if _, ok := b.recipients[id]; ok {
-		b.closeRecipient(id)
+		delete(b.recipients, id)
 		return ok
 	}
 
@@ -253,22 +178,9 @@ func (b *Bus[T]) DetachAll() int {
 	// count how many are in there right now
 	cnt := len(b.recipients)
 
-	// close all current in separate goroutine
-	for id := range b.recipients {
-		b.closeRecipient(id)
-	}
-
-	b.recipients = make(map[string]*recipient[T])
+	b.recipients = make(map[string]EventFunc[T])
 
 	return cnt
-}
-
-func (b *Bus[T]) closeRecipient(id string) {
-	go func(r *recipient[T]) {
-		r.wg.Wait()
-		close(r.in)
-	}(b.recipients[id])
-	delete(b.recipients, id)
 }
 
 func buildFilteredFunc[T any](topicFilters []any, fn EventFunc[T]) (EventFunc[T], error) {

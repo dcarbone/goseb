@@ -44,10 +44,9 @@ func TestBus(t *testing.T) {
 }
 
 func BenchmarkBus_Push_Unfiltered(b *testing.B) {
-	const testTopic = "test-topic"
-
-	var (
-		data = true
+	const (
+		testTopic = "test-topic"
+		testData  = true
 	)
 
 	for i := 10; i <= 10000; i = i * 10 {
@@ -65,7 +64,7 @@ func BenchmarkBus_Push_Unfiltered(b *testing.B) {
 
 			b.ResetTimer()
 			for m := 0; m < b.N; m++ {
-				bus.Push(context.Background(), testTopic, data)
+				bus.Push(context.Background(), testTopic, testData)
 			}
 		})
 	}
